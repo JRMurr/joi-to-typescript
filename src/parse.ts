@@ -1,7 +1,6 @@
 import Joi from 'joi';
-import { filterMap } from './utils';
+import { filterMap, filterMapObject } from './utils';
 import { TypeContent, makeTypeContentRoot, makeTypeContentChild, Settings } from './types';
-import * as _ from 'lodash';
 export const supportedJoiTypes = ['array', 'object', 'alternatives', 'any', 'boolean', 'date', 'number', 'string'];
 // unsupported: 'link'| 'binary' | 'symbol'
 
@@ -330,9 +329,11 @@ function parseAlternatives(details: AlternativesDescribe, settings: Settings): T
 
 function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent | undefined {
   const fieldsConditionedOn: ConditionalFields = {};
+  const conditionedFields: string[] = [];
   // TODO: keep map of key => parsedSchema so we can look it up later when merging in the conditional info
   // Will need to seperate the fields not referenced in a conditional/are not conditional into their own list/object
-  let children = filterMap(Object.entries(details.keys || {}), ([key, value]) => {
+
+  const parsedFields = filterMapObject(details.keys || {}, (key, value) => {
     const parsedSchema = parseSchema(value, settings);
     // The only type that could return this is alternatives
     // see parseAlternatives for why this is ignored
@@ -345,9 +346,11 @@ function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent 
       const path = conditionInfo.ref?.path;
       if (path?.length === 1 && !path[0].includes('.')) {
         const conditionedKey = path[0];
-        const conditions = _.pick(conditionInfo, ['is', 'then', 'otherwise']);
-        // if this is the first condition on the key, union will make a new array
-        fieldsConditionedOn[conditionedKey] = _.union(fieldsConditionedOn[conditionedKey], [{ key, conditions }]);
+        const { is, then, otherwise } = conditionInfo;
+        const currVal = fieldsConditionedOn[conditionedKey] || [];
+        currVal.push({ key, conditions: { is, then, otherwise } });
+        fieldsConditionedOn[conditionedKey] = currVal;
+        conditionedFields.push(key);
       }
       // const tmp = _.pick(value.whens[0], ['is', 'then', 'otherwise']);
       // const tmp2 = _.mapValues(tmp, value => parseSchema(value, settings));
@@ -356,6 +359,11 @@ function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent 
     parsedSchema.name = /^[$A-Z_][0-9A-Z_$]*$/i.test(key || '') ? key : `'${key}'`;
     return parsedSchema as TypeContentWithName;
   });
+  // TODO: only do the conditional if all the "is" conditionals have allowed values
+  // this way we can do discrimating unions on the is. Might need to make sure the key being conditioned on types also is only allowed
+
+  // we might be able to do it with more generic types if joi.any is not used.
+
   // For each field being conditioned on make a discrimated union of all the conditions
   // then do an intersection with the rest of the object keys
   /**

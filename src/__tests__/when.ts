@@ -29,3 +29,8 @@ describe('test using when()', () => {
     console.log(`when.ts:18~~~~~~~~~~~~~~~~~~~${JSON.stringify(result, null, 4)}~~~~~~~~~~~~~~~~~~~`);
   });
 });
+
+// type Subtract<T, U> = T extends U ? never : T;
+
+type Tmp = { x: 'a'; y: 'a' | 'b' } | { x: any; y: number };
+const tmp: Tmp = { x: 'a', y: '4' };

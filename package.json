@@ -28,8 +28,7 @@
     "pub": "tsc && yarn publish"
   },
   "dependencies": {
-    "joi": "^17.2.1",
-    "lodash": "^4.17.20"
+    "joi": "^17.2.1"
   },
   "devDependencies": {
     "@types/jest": "^26.0.19",
