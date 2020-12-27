@@ -73,9 +73,9 @@ export interface BaseTypeContent {
   description?: string;
 
   /**
-   * If this is an object property is it required
+   * If this is an object property is it required, optional or forbidden
    */
-  required?: boolean;
+  presence?: 'optional' | 'required' | 'forbidden';
 }
 
 /**
@@ -114,7 +114,7 @@ export interface TypeContentChild extends BaseTypeContent {
 export function makeTypeContentChild({
   content,
   customTypes,
-  required,
+  presence,
   name,
   description
 }: Omit<TypeContentChild, '__isRoot'>): TypeContentChild {
@@ -122,7 +122,7 @@ export function makeTypeContentChild({
     __isRoot: false,
     content,
     customTypes,
-    required,
+    presence,
     name,
     description
   };
@@ -132,7 +132,7 @@ export function makeTypeContentRoot({
   joinOperation,
   name,
   children,
-  required,
+  presence,
   description
 }: Omit<TypeContentRoot, '__isRoot'>): TypeContentRoot {
   return {
@@ -140,7 +140,7 @@ export function makeTypeContentRoot({
     joinOperation,
     name,
     children,
-    required,
+    presence,
     description
   };
 }

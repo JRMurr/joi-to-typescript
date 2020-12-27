@@ -1,17 +1,29 @@
 import Joi from 'joi';
 import { filterMap } from './utils';
 import { TypeContent, makeTypeContentRoot, makeTypeContentChild, Settings } from './types';
-
+import * as _ from 'lodash';
 export const supportedJoiTypes = ['array', 'object', 'alternatives', 'any', 'boolean', 'date', 'number', 'string'];
 // unsupported: 'link'| 'binary' | 'symbol'
+
+type AllowDescribe<T> = (T | { override: true })[];
+
+export interface WhenDescribe {
+  ref?: {
+    path: string[];
+  };
+  is: Describe;
+  then: Describe;
+  otherwise: Describe;
+}
 
 export interface BaseDescribe extends Joi.Description {
   flags?: {
     label?: string;
     description?: string;
-    presence?: 'optional' | 'required';
+    presence?: 'optional' | 'required' | 'forbidden';
     unknown?: boolean;
   };
+  whens?: WhenDescribe[];
 }
 
 export interface ArrayDescribe extends BaseDescribe {
@@ -31,7 +43,7 @@ export interface AlternativesDescribe extends BaseDescribe {
 
 export interface StringDescribe extends BaseDescribe {
   type: 'string';
-  allow?: string[];
+  allow?: AllowDescribe<string>;
 }
 
 export interface BasicDescribe extends BaseDescribe {
@@ -43,22 +55,26 @@ export type Describe = ArrayDescribe | BasicDescribe | ObjectDescribe | Alternat
 // Sometimes we know the type content will have name set
 type TypeContentWithName = TypeContent & { name: string };
 
+type Conditions = Omit<WhenDescribe, 'ref'>;
+type ConditionalFields = Record<
+  string,
+  {
+    key: string;
+    conditions: Conditions;
+  }[]
+>;
+
 function getCommonDetails(
   details: Describe,
   settings: Settings
-): { label?: string; description?: string; required: boolean } {
+): { label?: string; description?: string; presence: TypeContent['presence'] } {
   const label = details.flags?.label;
   const description = details.flags?.description;
-  const presence = details.flags?.presence;
-  let required;
-  if (presence === 'optional') {
-    required = false;
-  } else if (presence === 'required') {
-    required = true;
-  } else {
-    required = settings.defaultToRequired;
+  let presence = details.flags?.presence;
+  if (!presence) {
+    presence = settings.defaultToRequired ? 'required' : 'optional';
   }
-  return { label, description, required };
+  return { label, description, presence };
 }
 
 export function getAllCustomTypes(parsedSchema: TypeContent): string[] {
@@ -133,21 +149,23 @@ function typeContentToTsHelper(
 
       // interface can have no properties {} if the joi object has none defined
       let objectStr = '{}';
-
-      if (children.length !== 0) {
-        const childrenContent = children.map(child => {
-          const childInfo = typeContentToTsHelper(commentEverything, child, false, indentLevel + 1);
-          // TODO: configure indent length
-          // forcing name to be defined here, might need a runtime check but it should be set if we are here
-          const descriptionStr = getDescriptionStr(
-            commentEverything,
-            child.name as string,
-            childInfo.description,
-            indentLevel + 1
-          );
-          const optionalStr = child.required ? '' : '?';
-          return `${descriptionStr}  ${getIndentStr(indentLevel)}${child.name}${optionalStr}: ${childInfo.tsContent};`;
-        });
+      const childrenContent = filterMap(children, child => {
+        if (child.presence === 'forbidden') {
+          return undefined;
+        }
+        const childInfo = typeContentToTsHelper(commentEverything, child, false, indentLevel + 1);
+        // TODO: configure indent length
+        // forcing name to be defined here, might need a runtime check but it should be set if we are here
+        const descriptionStr = getDescriptionStr(
+          commentEverything,
+          child.name as string,
+          childInfo.description,
+          indentLevel + 1
+        );
+        const optionalStr = child.presence === 'required' ? '' : '?';
+        return `${descriptionStr}  ${getIndentStr(indentLevel)}${child.name}${optionalStr}: ${childInfo.tsContent};`;
+      });
+      if (childrenContent.length !== 0) {
         objectStr = `{\n${childrenContent.join('\n')}\n${getIndentStr(indentLevel)}}`;
       }
       if (doExport) {
@@ -200,11 +218,11 @@ export function parseSchema(
         return parseBasicSchema(details, settings);
     }
   }
-  const { label, description, required } = getCommonDetails(details, settings);
+  const { label, description, presence } = getCommonDetails(details, settings);
   if (label && useLabels && !ignoreLabels.includes(label)) {
     // skip parsing and just reference the label since we assumed we parsed the schema that the label references
     // TODO: do we want to use the labels description if we reference it?
-    return makeTypeContentChild({ content: label, customTypes: [label], description, required });
+    return makeTypeContentChild({ content: label, customTypes: [label], description, presence });
   }
   if (!supportedJoiTypes.includes(details.type)) {
     // TODO: debug/better error logging
@@ -218,8 +236,20 @@ export function parseSchema(
   }
   parsedSchema.name = label;
   parsedSchema.description = description;
-  parsedSchema.required = required;
+  parsedSchema.presence = presence;
   return parsedSchema;
+}
+
+function getAllowedValues<T>(allowed?: AllowDescribe<T>): T[] {
+  if (!allowed) {
+    return [];
+  }
+  return filterMap(allowed, value => {
+    if (typeof value === 'object') {
+      return undefined;
+    }
+    return value;
+  });
 }
 
 function parseBasicSchema(details: BasicDescribe, settings: Settings): TypeContent | undefined {
@@ -230,7 +260,7 @@ function parseBasicSchema(details: BasicDescribe, settings: Settings): TypeConte
   if (joiType === 'date') {
     content = 'Date';
   }
-  const values = details.allow;
+  const values = getAllowedValues(details.allow);
 
   // at least one value
   if (values && values.length !== 0) {
@@ -249,7 +279,7 @@ function parseBasicSchema(details: BasicDescribe, settings: Settings): TypeConte
 
 function parseStringSchema(details: StringDescribe, settings: Settings): TypeContent | undefined {
   const { label: name, description } = getCommonDetails(details, settings);
-  const values = details.allow;
+  const values = getAllowedValues(details.allow);
   const stringAllowValues = [null, ''];
 
   // at least one value
@@ -299,6 +329,9 @@ function parseAlternatives(details: AlternativesDescribe, settings: Settings): T
 }
 
 function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent | undefined {
+  const fieldsConditionedOn: ConditionalFields = {};
+  // TODO: keep map of key => parsedSchema so we can look it up later when merging in the conditional info
+  // Will need to seperate the fields not referenced in a conditional/are not conditional into their own list/object
   let children = filterMap(Object.entries(details.keys || {}), ([key, value]) => {
     const parsedSchema = parseSchema(value, settings);
     // The only type that could return this is alternatives
@@ -307,15 +340,38 @@ function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent 
       /* istanbul ignore next */
       return undefined;
     }
+    if (value.whens?.length === 1) {
+      const conditionInfo = value.whens[0];
+      const path = conditionInfo.ref?.path;
+      if (path?.length === 1 && !path[0].includes('.')) {
+        const conditionedKey = path[0];
+        const conditions = _.pick(conditionInfo, ['is', 'then', 'otherwise']);
+        // if this is the first condition on the key, union will make a new array
+        fieldsConditionedOn[conditionedKey] = _.union(fieldsConditionedOn[conditionedKey], [{ key, conditions }]);
+      }
+      // const tmp = _.pick(value.whens[0], ['is', 'then', 'otherwise']);
+      // const tmp2 = _.mapValues(tmp, value => parseSchema(value, settings));
+      // console.log(`parse.ts:337~~~~~~~~~~~~~~~~~~~${JSON.stringify(tmp2, null, 4)}~~~~~~~~~~~~~~~~~~~`);
+    }
     parsedSchema.name = /^[$A-Z_][0-9A-Z_$]*$/i.test(key || '') ? key : `'${key}'`;
     return parsedSchema as TypeContentWithName;
   });
-
+  // For each field being conditioned on make a discrimated union of all the conditions
+  // then do an intersection with the rest of the object keys
+  /**
+   * type Tmp = ({
+   *    type: 'a';
+   *    aField: string
+   * } | {
+   *    type 'b'
+   *    bField: number
+   * }) & {nonConditionedField: boolean}
+   */
   if (details?.flags?.unknown === true) {
     const unknownProperty = {
       content: 'any',
       name: '[x: string]',
-      required: true,
+      presence: 'required',
       description: 'Unknown Property'
     } as TypeContentWithName;
     children.push(unknownProperty);
@@ -335,5 +391,6 @@ function parseObjects(details: ObjectDescribe, settings: Settings): TypeContent 
     });
   }
   const { label: name, description } = getCommonDetails(details, settings);
+  // TODO: If there are conditionals the join type here would be intersection
   return makeTypeContentRoot({ joinOperation: 'object', children, name, description });
 }

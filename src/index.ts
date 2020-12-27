@@ -39,7 +39,7 @@ export const defaultSettings = (settings: Partial<Settings>): Settings => {
 export const convertSchema = (settings: Settings, joi: AnySchema, exportedName?: string): ConvertedType | undefined => {
   const details = joi.describe() as Describe;
   const name = details?.flags?.label || exportedName;
-
+  console.log(`index.ts:45~~~~~~~~~~~~~~~~~~~${JSON.stringify(details, null, 4)}~~~~~~~~~~~~~~~~~~~`);
   if (!name) {
     throw new Error(`At least one "object" does not have a .label(). Details: ${JSON.stringify(details)}`);
   }

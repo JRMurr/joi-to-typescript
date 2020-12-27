@@ -28,10 +28,12 @@
     "pub": "tsc && yarn publish"
   },
   "dependencies": {
-    "joi": "^17.2.1"
+    "joi": "^17.2.1",
+    "lodash": "^4.17.20"
   },
   "devDependencies": {
     "@types/jest": "^26.0.19",
+    "@types/lodash": "^4.14.166",
     "@types/node": "^12.7.12",
     "@typescript-eslint/eslint-plugin": "^2.3.3",
     "@typescript-eslint/parser": "^2.3.3",
